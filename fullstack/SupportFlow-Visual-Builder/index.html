@@ -1,13 +1,796 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SupportFlow Builder</title>
-    </head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Support Flow</title>
+<link rel="stylesheet" href="styles.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+</head>
 <body>
-    <div id="root">
+
+<!-- bar -->
+<header class="topbar">
+  <div class="logo">SupportFlow</div>
+  <div class="topbar-sep"></div>
+  <div class="mode-tabs">
+    <button class="mode-tab active" id="tab-editor">Editor</button>
+    <button class="mode-tab" id="tab-preview">▶ Preview</button>
+  </div>
+  <div class="topbar-spacer"></div>
+  <button class="btn" id="btn-add-node">+ New Node</button>
+  <button class="btn" id="btn-export">↓ Export JSON</button>
+  <button class="btn primary" id="btn-play">▶ Run Preview</button>
+</header>
+
+<!-- workspace -->
+<div class="workspace">
+
+  <!-- CANVAS -->
+  <div class="canvas-wrap" id="canvasWrap">
+    <div class="canvas-inner" id="canvasInner">
+      <svg class="canvas-svg" id="svg"></svg>
+
+      <!-- nodes here -->
+    </div>
+    
+  </div>
+
+  <!-- EDIT PANEL -->
+  <aside class="edit-panel" id="editPanel">
+    <div class="panel-header">
+      <span class="panel-title" id="panelTitle">Node Inspector</span>
+      <button class="btn" id="btnClosePanel" style="padding:4px 10px;font-size:12px;">✕</button>
+    </div>
+    <div class="panel-body" id="panelBody"></div>
+  </aside>
+
+
+  <div class="zoom-controls">
+    <button class="zoom-btn" id="zoomIn">+</button>
+    <div class="zoom-label" id="zoomLabel">100%</div>
+    <button class="zoom-btn" id="zoomOut">−</button>
+    <button class="zoom-btn" id="zoomFit" title="Fit to screen" style="font-size:11px;">⊡</button>
+  </div>
+
+  <!-- MINIMAP -->
+  <div class="minimap" id="minimap">
+    <canvas id="minimapCanvas" width="160" height="100"></canvas>
+  </div>
+
+  <!-- PREVIEW OVERLAY -->
+  <div class="preview-overlay" id="previewOverlay">
+    <div class="chat-shell">
+      <div class="chat-header">
+        <div class="bot-avatar">⚙️</div>
+        <div>
+          <div class="bot-name">SupportFlow Bot</div>
+          <div class="bot-status">● Online</div>
         </div>
-    <script type="module" src="/src/main.js"></script>
+        <div style="flex:1"></div>
+        <button class="btn" id="btnClosePreview" style="padding:4px 10px;font-size:11px;">✕ Exit</button>
+      </div>
+      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-options" id="chatOptions"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- status bar -->
+<footer class="statusbar">
+  <div class="status-item"><div class="status-dot"></div> Ready</div>
+  <div class="status-item" id="statusNodes">Nodes: 0</div>
+  <div class="status-item" id="statusConns">Connections: 0</div>
+  <div class="status-item" id="statusSelected">Selected: —</div>
+</footer>
+
+<!-- ADD NODE  -->
+<div class="modal-backdrop" id="addModal">
+  <div class="modal">
+    <div class="modal-title">Add New Node</div>
+    <div class="field-group">
+      <label class="field-label">Node Type</label>
+      <div class="type-select-group">
+        <button class="type-btn sel-question" data-type="question" id="typeQuestion">Question</button>
+        <button class="type-btn" data-type="end" id="typeEnd">End</button>
+      </div>
+    </div>
+    <div class="field-group">
+      <label class="field-label">Node Text</label>
+      <textarea class="field-input" id="newNodeText" rows="3" placeholder="Enter question or message…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="btnCancelModal">Cancel</button>
+      <button class="btn primary" id="btnConfirmModal">Add Node</button>
+    </div>
+  </div>
+</div>
+
+<!-- tooltip -->
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+
+
+//  DATA 
+const INITIAL_DATA = {"meta":{"theme":"dark","canvas_size":{"w":1200,"h":800}},"nodes":[{"id":"1","type":"start","text":"Welcome to Support. What is your issue?","position":{"x":500,"y":50},"options":[{"label":"Internet is down","nextId":"2"},{"label":"Billing Question","nextId":"3"}]},{"id":"2","type":"question","text":"Have you tried restarting your router?","position":{"x":250,"y":250},"options":[{"label":"Yes, didn't work","nextId":"4"},{"label":"No, let me try","nextId":"5"}]},{"id":"3","type":"question","text":"Is this for a Personal or Business account?","position":{"x":750,"y":250},"options":[{"label":"Personal","nextId":"6"},{"label":"Business","nextId":"6"}]},{"id":"4","type":"end","text":"Please call 555-0199 for a technician visit.","position":{"x":100,"y":500},"options":[]},{"id":"5","type":"end","text":"Restarting usually fixes it! Come back if it fails.","position":{"x":400,"y":500},"options":[]},{"id":"6","type":"end","text":"Connecting you to a Billing Agent...","position":{"x":750,"y":500},"options":[]}]};
+
+let state = { nodes: [], nextId: 10 };
+let selectedId = null;
+let scale = 1, panX = 0, panY = 0;
+
+//init 
+function init() {
+  state.nodes = JSON.parse(JSON.stringify(INITIAL_DATA.nodes));
+  state.nextId = Math.max(...state.nodes.map(n => parseInt(n.id))) + 1;
+  renderAll();
+  updateStatus();
+  setupCanvasDrag();
+  setupZoom();
+  setupMinimap();
+  bindToolbar();
+  bindPanel();
+  bindModal();
+  bindPreview();
+}
+
+//  RENDER ALL 
+function renderAll() {
+  renderNodes();
+  renderConnections();
+  renderMinimap();
+}
+
+//  nodes 
+function renderNodes() {
+  const inner = document.getElementById('canvasInner');
+  // remove old nodes
+  inner.querySelectorAll('.node').forEach(el => el.remove());
+
+  state.nodes.forEach(node => {
+    const el = document.createElement('div');
+    el.className = 'node' + (selectedId === node.id ? ' selected' : '');
+    el.dataset.id = node.id;
+    el.dataset.type = node.type;
+    el.style.left = node.position.x + 'px';
+    el.style.top  = node.position.y + 'px';
+
+    const badgeClass = node.type === 'start' ? 'badge-start' : node.type === 'end' ? 'badge-end' : 'badge-question';
+    const badgeLabel = node.type === 'start' ? 'START' : node.type === 'end' ? 'END' : 'Q';
+
+    let optionsHtml = '';
+    if (node.options && node.options.length) {
+      optionsHtml = '<div class="node-options">' +
+        node.options.map(o => `<div class="node-option-chip">${escHtml(o.label)}</div>`).join('') +
+        '</div>';
+    }
+
+    el.innerHTML = `
+      <div class="node-badge ${badgeClass}">${badgeLabel}</div>
+      <div class="node-dot-top"></div>
+      <div class="node-body">
+        <div class="node-text">${escHtml(node.text)}</div>
+        ${optionsHtml}
+      </div>
+      <div class="node-dot-bottom"></div>
+    `;
+
+    el.addEventListener('click', e => { e.stopPropagation(); selectNode(node.id); });
+    makeDraggable(el, node);
+    inner.appendChild(el);
+  });
+}
+
+//  CONNECTIONS (SVG) 
+function renderConnections() {
+  const svg = document.getElementById('svg');
+  svg.innerHTML = '';
+
+  // arrowhead def
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L7,3.5 Z" fill="#3a3a3a"/>
+    </marker>
+    <marker id="arrow-hi" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path d="M0,0 L0,7 L7,3.5 Z" fill="#f5a623"/>
+    </marker>
+  `;
+  svg.appendChild(defs);
+
+  const nodeMap = {};
+  state.nodes.forEach(n => nodeMap[n.id] = n);
+  const NODE_W = 220;
+
+  state.nodes.forEach(node => {
+    if (!node.options) return;
+    node.options.forEach((opt, idx) => {
+      const target = nodeMap[opt.nextId];
+      if (!target) return;
+
+      const totalOpts = node.options.length;
+
+     
+      const srcX = node.position.x + NODE_W * ((idx + 1) / (totalOpts + 1));
+      const srcY = node.position.y + nodeHeight(node);
+
+      // Target: top center
+      const tgtX = target.position.x + NODE_W / 2;
+      const tgtY = target.position.y;
+
+      // Bezier
+      const dy = Math.abs(tgtY - srcY);
+      const cp1y = srcY + Math.max(40, dy * 0.5);
+      const cp2y = tgtY - Math.max(40, dy * 0.3);
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const d = `M ${srcX} ${srcY} C ${srcX} ${cp1y}, ${tgtX} ${cp2y}, ${tgtX} ${tgtY}`;
+      path.setAttribute('d', d);
+      path.setAttribute('class', 'conn-path');
+      path.setAttribute('marker-end', 'url(#arrow)');
+      path.dataset.from = node.id;
+      path.dataset.to = opt.nextId;
+      svg.appendChild(path);
+
+      // Label mid
+      const midX = (srcX + tgtX) / 2;
+      const midY = (srcY + tgtY) / 2;
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', midX);
+      label.setAttribute('y', midY);
+      label.setAttribute('class', 'conn-label');
+      label.setAttribute('text-anchor', 'middle');
+      label.textContent = truncate(opt.label, 18);
+      svg.appendChild(label);
+    });
+  });
+}
+
+function nodeHeight(node) {
+  const base = 28 + 16 + 20; // badge + padding + text estimate
+  const textLines = Math.ceil((node.text || '').length / 22);
+  const optHeight = node.options ? node.options.length * 26 : 0;
+  return base + textLines * 20 + optHeight + 10;
+}
+
+//  drag nodes 
+function makeDraggable(el, node) {
+  let startMX, startMY, startNX, startNY, moved = false;
+
+  el.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    startMX = e.clientX; startMY = e.clientY;
+    startNX = node.position.x; startNY = node.position.y;
+    moved = false;
+    el.classList.add('dragging');
+
+    function onMove(e) {
+      const dx = (e.clientX - startMX) / scale;
+      const dy = (e.clientY - startMY) / scale;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+      node.position.x = Math.round(startNX + dx);
+      node.position.y = Math.round(startNY + dy);
+      el.style.left = node.position.x + 'px';
+      el.style.top  = node.position.y + 'px';
+      renderConnections();
+      renderMinimap();
+    }
+
+    function onUp(e) {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      el.classList.remove('dragging');
+      if (moved) { e.stopImmediatePropagation(); }
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+//SELECT NODE 
+function selectNode(id) {
+  selectedId = id;
+  document.querySelectorAll('.node').forEach(el => {
+    el.classList.toggle('selected', el.dataset.id === id);
+  });
+  openPanel(id);
+  highlightConnections(id);
+  updateStatus();
+}
+
+function highlightConnections(id) {
+  document.querySelectorAll('.conn-path').forEach(p => {
+    const hi = (id && (p.dataset.from === id || p.dataset.to === id));
+    p.classList.toggle('highlighted', hi);
+    p.setAttribute('marker-end', hi ? 'url(#arrow-hi)' : 'url(#arrow)');
+  });
+}
+
+//  CANVAS PANel 
+function setupCanvasDrag() {
+  const wrap = document.getElementById('canvasWrap');
+  let isPanning = false, sx, sy, px0, py0;
+
+  wrap.addEventListener('mousedown', e => {
+    if (e.target.closest('.node')) return;
+    isPanning = true; sx = e.clientX; sy = e.clientY;
+    px0 = panX; py0 = panY;
+    wrap.classList.add('grabbing');
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!isPanning) return;
+    panX = px0 + (e.clientX - sx);
+    panY = py0 + (e.clientY - sy);
+    applyTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    isPanning = false;
+    wrap.classList.remove('grabbing');
+  });
+
+  wrap.addEventListener('click', e => {
+    if (!e.target.closest('.node')) {
+      selectedId = null;
+      document.querySelectorAll('.node').forEach(el => el.classList.remove('selected'));
+      closePanel();
+      highlightConnections(null);
+      updateStatus();
+    }
+  });
+
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const rect = wrap.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    panX = mx - (mx - panX) * delta;
+    panY = my - (my - panY) * delta;
+    scale = Math.min(2, Math.max(0.3, scale * delta));
+    applyTransform();
+    updateZoomLabel();
+  }, { passive: false });
+}
+
+function applyTransform() {
+  const inner = document.getElementById('canvasInner');
+  inner.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+}
+
+//  ZOOM 
+function setupZoom() {
+  document.getElementById('zoomIn').addEventListener('click', () => { zoom(1.2); });
+  document.getElementById('zoomOut').addEventListener('click', () => { zoom(0.8); });
+  document.getElementById('zoomFit').addEventListener('click', fitToScreen);
+}
+
+function zoom(factor) {
+  const wrap = document.getElementById('canvasWrap');
+  const rect = wrap.getBoundingClientRect();
+  const cx = rect.width / 2, cy = rect.height / 2;
+  panX = cx - (cx - panX) * factor;
+  panY = cy - (cy - panY) * factor;
+  scale = Math.min(2, Math.max(0.3, scale * factor));
+  applyTransform();
+  updateZoomLabel();
+}
+
+function fitToScreen() {
+  if (!state.nodes.length) return;
+  const wrap = document.getElementById('canvasWrap');
+  const rect = wrap.getBoundingClientRect();
+  const padding = 60;
+  const xs = state.nodes.map(n => n.position.x);
+  const ys = state.nodes.map(n => n.position.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs) + 220;
+  const minY = Math.min(...ys), maxY = Math.max(...ys) + 180;
+  const contentW = maxX - minX, contentH = maxY - minY;
+  scale = Math.min((rect.width - padding * 2) / contentW, (rect.height - padding * 2) / contentH, 1.5);
+  panX = (rect.width  - contentW * scale) / 2 - minX * scale;
+  panY = (rect.height - contentH * scale) / 2 - minY * scale;
+  applyTransform();
+  updateZoomLabel();
+}
+
+function updateZoomLabel() {
+  document.getElementById('zoomLabel').textContent = Math.round(scale * 100) + '%';
+}
+
+//  MINIMAP 
+function setupMinimap() { renderMinimap(); }
+
+function renderMinimap() {
+  const canvas = document.getElementById('minimapCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 160, 100);
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, 160, 100);
+
+  const scaleX = 160 / 1400;
+  const scaleY = 100 / 1000;
+
+  // draw connections
+  const nodeMap = {};
+  state.nodes.forEach(n => nodeMap[n.id] = n);
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 0.8;
+  state.nodes.forEach(node => {
+    if (!node.options) return;
+    node.options.forEach(opt => {
+      const t = nodeMap[opt.nextId];
+      if (!t) return;
+      ctx.beginPath();
+      ctx.moveTo((node.position.x + 110) * scaleX, (node.position.y + 60) * scaleY);
+      ctx.lineTo((t.position.x + 110) * scaleX, t.position.y * scaleY);
+      ctx.stroke();
+    });
+  });
+
+  // draw nodes
+  state.nodes.forEach(node => {
+    ctx.fillStyle = node.type === 'start' ? '#f5a623' : node.type === 'end' ? '#5ccb8e' : '#4a9eff';
+    const x = node.position.x * scaleX;
+    const y = node.position.y * scaleY;
+    ctx.beginPath();
+    ctx.roundRect(x, y, 220 * scaleX, 60 * scaleY, 1);
+    ctx.fill();
+  });
+
+  // viewport indicator
+  const wrap = document.getElementById('canvasWrap');
+  const rect = wrap.getBoundingClientRect();
+  const vx = (-panX / scale) * scaleX;
+  const vy = (-panY / scale) * scaleY;
+  const vw = (rect.width / scale) * scaleX;
+  const vh = (rect.height / scale) * scaleY;
+  ctx.strokeStyle = '#f5a623';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(Math.max(0, vx), Math.max(0, vy), Math.min(160, vw), Math.min(100, vh));
+}
+
+//  EDIT PANEL 
+function openPanel(id) {
+  const node = state.nodes.find(n => n.id === id);
+  if (!node) return;
+
+  document.getElementById('panelTitle').textContent = `NODE — ${node.type.toUpperCase()} #${node.id}`;
+  const body = document.getElementById('panelBody');
+  body.innerHTML = buildPanelHTML(node);
+  bindPanelInputs(node);
+  document.getElementById('editPanel').classList.add('open');
+}
+
+function buildPanelHTML(node) {
+  const nodeIds = state.nodes.map(n => n.id);
+
+  let optionsSection = '';
+  if (node.type !== 'end') {
+    const optRows = (node.options || []).map((opt, i) => `
+      <div class="option-row" data-idx="${i}">
+        <div class="option-row-top">
+          <input class="opt-label-input" data-field="label" data-idx="${i}" value="${escAttr(opt.label)}" placeholder="Option label" />
+          <button class="del-opt-btn" data-del="${i}" title="Delete option">✕</button>
+        </div>
+        <select class="opt-next-select" data-field="nextId" data-idx="${i}">
+          <option value="">— next node —</option>
+          ${nodeIds.filter(id => id !== node.id).map(id => {
+            const n = state.nodes.find(x => x.id === id);
+            return `<option value="${id}" ${opt.nextId === id ? 'selected' : ''}>#${id} ${escHtml(truncate(n.text, 22))}</option>`;
+          }).join('')}
+        </select>
+      </div>
+    `).join('');
+
+    optionsSection = `
+      <div class="field-group">
+        <label class="field-label">Options (${node.options.length})</label>
+        <div class="options-editor" id="optionsEditor">
+          ${optRows}
+          <button class="add-option-btn" id="addOptionBtn">+ Add Option</button>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="field-group">
+      <label class="field-label">Node ID</label>
+      <input class="field-input" value="${node.id}" readonly />
+    </div>
+    <div class="field-group">
+      <label class="field-label">Type</label>
+      <input class="field-input" value="${node.type}" readonly />
+    </div>
+    <div class="field-group">
+      <label class="field-label">Message / Question</label>
+      <textarea class="field-input" id="editNodeText" rows="4">${escHtml(node.text)}</textarea>
+    </div>
+    ${optionsSection}
+    <div class="field-group">
+      <button class="btn danger" id="btnDeleteNode" style="width:100%;justify-content:center;">✕ Delete Node</button>
+    </div>
+  `;
+}
+
+function bindPanelInputs(node) {
+  // Text edit / live
+  const textArea = document.getElementById('editNodeText');
+  if (textArea) {
+    textArea.addEventListener('input', () => {
+      node.text = textArea.value;
+      const nodeEl = document.querySelector(`.node[data-id="${node.id}"] .node-text`);
+      if (nodeEl) nodeEl.textContent = node.text;
+      updateStatus();
+      renderMinimap();
+    });
+  }
+
+  // Option labels & nextId
+  document.querySelectorAll('.opt-label-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const idx = parseInt(inp.dataset.idx);
+      node.options[idx].label = inp.value;
+      renderNodes();
+      renderConnections();
+      renderMinimap();
+      // re-focus same input
+      const inputs = document.querySelectorAll('.opt-label-input');
+      if (inputs[idx]) { inputs[idx].focus(); inputs[idx].selectionStart = inputs[idx].selectionEnd = inputs[idx].value.length; }
+    });
+  });
+
+  document.querySelectorAll('.opt-next-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const idx = parseInt(sel.dataset.idx);
+      node.options[idx].nextId = sel.value;
+      renderConnections();
+      renderMinimap();
+    });
+  });
+
+  // Delete option
+  document.querySelectorAll('.del-opt-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.del);
+      node.options.splice(idx, 1);
+      openPanel(node.id);
+      renderAll();
+    });
+  });
+
+  // Add option
+  const addBtn = document.getElementById('addOptionBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      node.options.push({ label: 'New option', nextId: '' });
+      openPanel(node.id);
+      renderAll();
+    });
+  }
+
+  // Delete node
+  const delBtn = document.getElementById('btnDeleteNode');
+  if (delBtn) {
+    delBtn.addEventListener('click', () => {
+      if (node.type === 'start') { alert('Cannot delete start node.'); return; }
+      // remove references
+      state.nodes.forEach(n => {
+        if (n.options) n.options = n.options.filter(o => o.nextId !== node.id);
+      });
+      state.nodes = state.nodes.filter(n => n.id !== node.id);
+      selectedId = null;
+      closePanel();
+      renderAll();
+      updateStatus();
+    });
+  }
+}
+
+function bindPanel() {
+  document.getElementById('btnClosePanel').addEventListener('click', () => {
+    closePanel();
+    selectedId = null;
+    document.querySelectorAll('.node').forEach(el => el.classList.remove('selected'));
+    highlightConnections(null);
+    updateStatus();
+  });
+}
+
+function closePanel() {
+  document.getElementById('editPanel').classList.remove('open');
+}
+
+//  TOOLBAR 
+function bindToolbar() {
+  document.getElementById('tab-editor').addEventListener('click', () => {
+    document.getElementById('tab-editor').classList.add('active');
+    document.getElementById('tab-preview').classList.remove('active');
+    closePreview();
+  });
+
+  document.getElementById('tab-preview').addEventListener('click', () => {
+    document.getElementById('tab-preview').classList.add('active');
+    document.getElementById('tab-editor').classList.remove('active');
+    startPreview();
+  });
+
+  document.getElementById('btn-play').addEventListener('click', () => {
+    document.getElementById('tab-preview').classList.add('active');
+    document.getElementById('tab-editor').classList.remove('active');
+    startPreview();
+  });
+
+  document.getElementById('btn-export').addEventListener('click', exportJSON);
+  document.getElementById('btn-add-node').addEventListener('click', () => {
+    document.getElementById('addModal').classList.add('open');
+  });
+}
+
+//  MODAL 
+let newNodeType = 'question';
+
+function bindModal() {
+  const typeBtns = document.querySelectorAll('.type-btn');
+  typeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      newNodeType = btn.dataset.type;
+      typeBtns.forEach(b => {
+        b.className = 'type-btn';
+        if (b.dataset.type === newNodeType) b.classList.add('sel-' + newNodeType);
+      });
+    });
+  });
+
+  document.getElementById('btnCancelModal').addEventListener('click', () => {
+    document.getElementById('addModal').classList.remove('open');
+    document.getElementById('newNodeText').value = '';
+  });
+
+  document.getElementById('btnConfirmModal').addEventListener('click', () => {
+    const text = document.getElementById('newNodeText').value.trim();
+    if (!text) { document.getElementById('newNodeText').focus(); return; }
+    const id = String(state.nextId++);
+    const maxY = Math.max(...state.nodes.map(n => n.position.y));
+    state.nodes.push({
+      id,
+      type: newNodeType,
+      text,
+      position: { x: 400 + Math.random() * 200, y: maxY + 200 },
+      options: newNodeType === 'end' ? [] : []
+    });
+    document.getElementById('addModal').classList.remove('open');
+    document.getElementById('newNodeText').value = '';
+    renderAll();
+    updateStatus();
+    // select new node
+    selectNode(id);
+  });
+
+  document.getElementById('addModal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+  });
+}
+
+//  PREVIEW 
+let previewHistory = [];
+
+function bindPreview() {
+  document.getElementById('btnClosePreview').addEventListener('click', () => {
+    closePreview();
+    document.getElementById('tab-editor').classList.add('active');
+    document.getElementById('tab-preview').classList.remove('active');
+  });
+}
+
+function startPreview() {
+  previewHistory = [];
+  const overlay = document.getElementById('previewOverlay');
+  overlay.classList.add('active');
+  document.getElementById('chatMessages').innerHTML = '';
+  document.getElementById('chatOptions').innerHTML = '';
+
+  const startNode = state.nodes.find(n => n.type === 'start');
+  if (!startNode) { alert('No start node found!'); closePreview(); return; }
+  showPreviewNode(startNode.id);
+}
+
+function closePreview() {
+  document.getElementById('previewOverlay').classList.remove('active');
+}
+
+function showPreviewNode(id) {
+  const nodeMap = {};
+  state.nodes.forEach(n => nodeMap[n.id] = n);
+  const node = nodeMap[id];
+  if (!node) return;
+
+  // Add bot message
+  appendChatMsg('bot', node.text);
+
+  const optionsEl = document.getElementById('chatOptions');
+  optionsEl.innerHTML = '';
+
+  if (!node.options || node.options.length === 0) {
+
+    // End node
+    optionsEl.innerHTML = `
+      <div class="chat-end-msg">Conversation ended.</div>
+      <div style="padding:0 16px 16px;display:flex;gap:8px;">
+        <button class="btn primary" id="btnRestart" style="flex:1;justify-content:center;">↺ Restart</button>
+      </div>
+    `;
+    document.getElementById('btnRestart').addEventListener('click', () => startPreview());
+  } else {
+    node.options.forEach(opt => {
+      const btn = document.createElement('button');
+      btn.className = 'chat-opt-btn';
+      btn.textContent = opt.label;
+      btn.addEventListener('click', () => {
+        optionsEl.innerHTML = '';
+        appendChatMsg('user', opt.label);
+        setTimeout(() => showPreviewNode(opt.nextId), 500);
+      });
+      optionsEl.appendChild(btn);
+    });
+  }
+
+  // Scroll
+  const msgs = document.getElementById('chatMessages');
+  setTimeout(() => { msgs.scrollTop = msgs.scrollHeight; }, 50);
+}
+
+function appendChatMsg(role, text) {
+  const msgs = document.getElementById('chatMessages');
+  const now = new Date();
+  const time = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `<div class="msg-bubble">${escHtml(text)}</div><div class="msg-time">${time}</div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+//  EXPORT 
+function exportJSON() {
+  const data = {
+    meta: INITIAL_DATA.meta,
+    nodes: state.nodes
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'flow_data.json';
+  a.click();
+}
+
+//  STATUS 
+function updateStatus() {
+  document.getElementById('statusNodes').textContent = `Nodes: ${state.nodes.length}`;
+  const connCount = state.nodes.reduce((sum, n) => sum + (n.options ? n.options.length : 0), 0);
+  document.getElementById('statusConns').textContent = `Connections: ${connCount}`;
+  const sel = selectedId ? state.nodes.find(n => n.id === selectedId) : null;
+  document.getElementById('statusSelected').textContent = sel ? `Selected: #${sel.id} (${sel.type})` : 'Selected: —';
+}
+
+//  HELPERS 
+function escHtml(s = '') {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s = '') { return escHtml(s); }
+function truncate(s = '', n) { return s.length > n ? s.slice(0, n) + '…' : s; }
+
+
+//  BOOT 
+window.addEventListener('load', () => {
+  init();
+  setTimeout(fitToScreen, 100);
+});
+</script>
 </body>
 </html>
